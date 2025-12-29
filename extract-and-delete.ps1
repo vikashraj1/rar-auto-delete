@@ -2,9 +2,49 @@
 # Usage: .\extract-and-delete.ps1 "path\to\file.part1.rar"
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [string]$FirstPartPath
 )
+
+# If no path provided, show file picker
+if (-not $FirstPartPath) {
+    Add-Type -AssemblyName System.Windows.Forms
+    
+    $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $openFileDialog.Filter = "RAR Part 1 Files (*.part1.rar;*.part01.rar)|*.part1.rar;*.part01.rar|All RAR Files (*.rar)|*.rar"
+    $openFileDialog.Title = "Select the first part of the RAR archive (part1.rar)"
+    $openFileDialog.InitialDirectory = [Environment]::GetFolderPath('Desktop')
+    
+    $result = $openFileDialog.ShowDialog()
+    
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        $FirstPartPath = $openFileDialog.FileName
+    }
+    else {
+        Write-Host "No file selected. Exiting..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 2
+        exit 0
+    }
+}
+
+# Ask for extraction destination
+Add-Type -AssemblyName System.Windows.Forms
+
+$folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+$folderBrowser.Description = "Select where to extract the files"
+$folderBrowser.RootFolder = [System.Environment+SpecialFolder]::MyComputer
+$folderBrowser.SelectedPath = (Get-Item $FirstPartPath).DirectoryName
+
+$folderResult = $folderBrowser.ShowDialog()
+
+if ($folderResult -eq [System.Windows.Forms.DialogResult]::OK) {
+    $extractPath = $folderBrowser.SelectedPath
+}
+else {
+    Write-Host "No destination selected. Exiting..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
+    exit 0
+}
 
 # Get WinRAR path
 $rarPath = "C:\Program Files\WinRAR\rar.exe"
@@ -39,14 +79,15 @@ foreach ($part in $allParts) {
     Write-Host "  $($part.Name)" -ForegroundColor Gray
 }
 Write-Host ""
+Write-Host "Extracting to: $extractPath" -ForegroundColor Cyan
 Write-Host "Starting extraction with auto-delete..." -ForegroundColor Green
 Write-Host ""
 
 # Start RAR extraction process
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $rarPath
-$psi.Arguments = "x `"$FirstPartPath`""
-$psi.WorkingDirectory = $directory
+$psi.Arguments = "x -ad `"$FirstPartPath`""
+$psi.WorkingDirectory = $extractPath
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
