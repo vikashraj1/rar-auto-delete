@@ -121,6 +121,31 @@ function Get-ExtractionDestination {
     return $null
 }
 
+function Get-UserConfirmation {
+    <#
+    .SYNOPSIS
+        Ask user for confirmation to proceed
+    #>
+    param(
+        [string]$Message = "Do you want to continue?",
+        [string]$DefaultChoice = "N"
+    )
+    
+    Write-Host ""
+    $promptText = if ($DefaultChoice -eq "Y") { "[Y/n]" } else { "[y/N]" }
+    Write-Host "$Message " -NoNewline -ForegroundColor Cyan
+    Write-Host "$promptText`: " -NoNewline -ForegroundColor Yellow
+    
+    $response = Read-Host
+    
+    # If user just presses Enter, use default
+    if ([string]::IsNullOrWhiteSpace($response)) {
+        $response = $DefaultChoice
+    }
+    
+    return $response -match '^[Yy]'
+}
+
 function Get-ArchiveParts {
     <#
     .SYNOPSIS
@@ -212,17 +237,40 @@ function Start-ExtractionWithCleanup {
         [string]$RarPath,
         [string]$FirstPartPath,
         [string]$DestinationPath,
-        [array]$AllParts
+        [array]$AllParts,
+        [string]$BaseName
     )
     
-    Write-ColorMessage "`nExtracting to: $DestinationPath" -Type Info
+    # Create subdirectory for extraction
+    $extractionDir = Join-Path $DestinationPath $BaseName
+    
+    if (Test-Path $extractionDir) {
+        Write-ColorMessage "`nWarning: Directory already exists: $extractionDir" -Type Warning
+        $overwrite = Get-UserConfirmation -Message "Overwrite existing directory?" -DefaultChoice "N"
+        if (-not $overwrite) {
+            Write-ColorMessage "Extraction cancelled." -Type Warning
+            return $false
+        }
+    }
+    else {
+        try {
+            New-Item -Path $extractionDir -ItemType Directory -Force | Out-Null
+            Write-ColorMessage "`nCreated extraction directory: $extractionDir" -Type Success
+        }
+        catch {
+            Write-ColorMessage "`nFailed to create directory: $_" -Type Error
+            return $false
+        }
+    }
+    
+    Write-ColorMessage "Extracting to: $extractionDir" -Type Info
     Write-ColorMessage "Starting extraction with auto-delete...`n" -Type Success
     
     # Setup extraction process
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $RarPath
     $psi.Arguments = "x `"$FirstPartPath`""
-    $psi.WorkingDirectory = $DestinationPath
+    $psi.WorkingDirectory = $extractionDir
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -296,6 +344,7 @@ function Start-ExtractionWithCleanup {
             
             Write-ColorMessage "`nExtraction completed successfully!" -Type Success
             Write-ColorMessage "Deleted $($deletedParts.Count) part(s)" -Type Info
+            Write-ColorMessage "Files extracted to: $extractionDir" -Type Info
             return $true
         }
         else {
@@ -323,49 +372,74 @@ try {
         exit 1
     }
     
-    # Step 2: Get source archive
+    # Step 2: Get source archive (part1)
+    Write-ColorMessage "=== RAR Archive Extractor with Auto-Delete ===" -Type Success
+    Write-ColorMessage ""
+    Write-ColorMessage "`nSelect part1.rar..." -Type Info
     $sourcePath = Get-SourceArchive -ProvidedPath $FirstPartPath
     if (-not $sourcePath) {
         Start-Sleep -Seconds 2
         exit 0
     }
     
-    # Step 3: Get archive parts
+    # Step 3: Get archive parts information
     $archiveInfo = Get-ArchiveParts -FirstPartPath $sourcePath
     if (-not $archiveInfo) {
         Start-Sleep -Seconds $CONFIG.ErrorDisplaySeconds
         exit 1
     }
     
-    Write-ColorMessage "Found $($archiveInfo.Parts.Count) parts to extract" -Type Info
+    Write-ColorMessage "`nFound $($archiveInfo.Parts.Count) parts:" -Type Info
     foreach ($part in $archiveInfo.Parts) {
         Write-ColorMessage "  $($part.Name)" -Type Gray
     }
     
-    # Step 4: Get extraction destination
+    # Step 4: Test archive integrity
+    if ($CONFIG.TestBeforeExtract) {
+        $testPassed = Test-ArchiveIntegrity -RarPath $rarPath -FirstPartPath $sourcePath -WorkingDirectory $archiveInfo.Directory
+        if (-not $testPassed) {
+            Write-ColorMessage "`nAborting extraction to prevent data loss." -Type Error
+            Start-Sleep -Seconds $CONFIG.ErrorDisplaySeconds
+            exit 1
+        }
+    }
+    
+    # Step 5: Ask for confirmation to continue
+    Write-ColorMessage "`n⚠️ WARNING: Source RAR parts will be permanently deleted during extraction!" -Type Warning
+    $confirmed = Get-UserConfirmation -Message "Proceed with extraction and deletion?" -DefaultChoice "N"
+    if (-not $confirmed) {
+        Write-ColorMessage "`nExtraction cancelled by user." -Type Warning
+        Start-Sleep -Seconds 2
+        exit 0
+    }
+    
+    # Step 6: Get extraction destination
+    Write-ColorMessage "`nSelect extraction destination..." -Type Info
     $destinationPath = Get-ExtractionDestination -DefaultPath $archiveInfo.Directory
     if (-not $destinationPath) {
         Start-Sleep -Seconds 2
         exit 0
     }
     
-    # Step 5: Test archive integrity
-    if ($CONFIG.TestBeforeExtract) {
-        $testPassed = Test-ArchiveIntegrity -RarPath $rarPath -FirstPartPath $sourcePath -WorkingDirectory $archiveInfo.Directory
-        if (-not $testPassed) {
-            Write-ColorMessage "Aborting extraction to prevent data loss." -Type Error
-            Start-Sleep -Seconds $CONFIG.ErrorDisplaySeconds
-            exit 1
-        }
-    }
-    
-    # Step 6: Extract with progressive cleanup
-    $success = Start-ExtractionWithCleanup -RarPath $rarPath -FirstPartPath $sourcePath -DestinationPath $destinationPath -AllParts $archiveInfo.Parts
+    # Step 7: Extract with progressive cleanup
+    $success = Start-ExtractionWithCleanup -RarPath $rarPath -FirstPartPath $sourcePath -DestinationPath $destinationPath -AllParts $archiveInfo.Parts -BaseName $archiveInfo.BaseName
     
     if ($success) {
+        # Get the actual extraction directory path
+        $extractionDir = Join-Path $destinationPath $archiveInfo.BaseName
+        
+        Write-ColorMessage "`nPress any key to open extraction folder in Explorer..." -Type Info
+        [void][Console]::ReadKey($true)
+        
+        # Open the extraction directory in Windows Explorer
+        if (Test-Path $extractionDir) {
+            Start-Process "explorer.exe" -ArgumentList $extractionDir
+        }
+        
         exit 0
     }
     else {
+        Start-Sleep -Seconds $CONFIG.ErrorDisplaySeconds
         exit 1
     }
 }
