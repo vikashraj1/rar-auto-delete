@@ -79,14 +79,58 @@ foreach ($part in $allParts) {
     Write-Host "  $($part.Name)" -ForegroundColor Gray
 }
 Write-Host ""
+Write-Host "Testing archive integrity..." -ForegroundColor Cyan
+
+# Test the archive first
+$testPsi = New-Object System.Diagnostics.ProcessStartInfo
+$testPsi.FileName = $rarPath
+$testPsi.Arguments = "t `"$FirstPartPath`""
+$testPsi.WorkingDirectory = $directory
+$testPsi.UseShellExecute = $false
+$testPsi.RedirectStandardOutput = $true
+$testPsi.RedirectStandardError = $true
+$testPsi.CreateNoWindow = $true
+
+$testProcess = New-Object System.Diagnostics.Process
+$testProcess.StartInfo = $testPsi
+[void]$testProcess.Start()
+
+# Read test output
+while (-not $testProcess.StandardOutput.EndOfStream) {
+    $line = $testProcess.StandardOutput.ReadLine()
+    if ($line) {
+        Write-Host $line -ForegroundColor Gray
+    }
+}
+
+$testProcess.WaitForExit()
+$testError = $testProcess.StandardError.ReadToEnd()
+
+if ($testProcess.ExitCode -ne 0) {
+    Write-Host ""
+    Write-Host "Archive test FAILED! The archive may be corrupted." -ForegroundColor Red
+    if ($testError) {
+        Write-Host $testError -ForegroundColor Red
+    }
+    Write-Host "Aborting extraction to prevent data loss." -ForegroundColor Red
+    $testProcess.Dispose()
+    Start-Sleep -Seconds 5
+    exit 1
+}
+
+Write-Host ""
+Write-Host "Archive test passed successfully!" -ForegroundColor Green
+Write-Host ""
 Write-Host "Extracting to: $extractPath" -ForegroundColor Cyan
 Write-Host "Starting extraction with auto-delete..." -ForegroundColor Green
 Write-Host ""
 
+$testProcess.Dispose()
+
 # Start RAR extraction process
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $rarPath
-$psi.Arguments = "x -ad `"$FirstPartPath`""
+$psi.Arguments = "x `"$FirstPartPath`""
 $psi.WorkingDirectory = $extractPath
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
