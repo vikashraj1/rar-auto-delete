@@ -6,6 +6,7 @@ Extracts multi-part RAR archives and automatically deletes each part as it's pro
 
 - Windows 10/11
 - WinRAR installed at `C:\Program Files\WinRAR\rar.exe`
+- **⚠️ IMPORTANT: Enough storage for extracted data + 1/n of total RAR parts**
 
 ## Installation
 
